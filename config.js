@@ -15,4 +15,5 @@ const PHONE_DISPLAY = "+91 XXXXX XXXXX"; // shown on the page
 // 3. Images — paste public URLs from Supabase Storage (leave "" to skip)
 const LOGO_URL = "";         // your company logo (square works best)
 const AGENT_PHOTO_URL = "";  // your photo for the profile section
-const HERO_IMAGE_URL = "";   // OPTIONAL: a real photo replaces the illustrated skyline
+const HERO_VIDEO_URL = "";   // BEST OPTION: a short looping video (mp4) of a skyline/interior — this is what makes the hero feel like real footage
+const HERO_IMAGE_URL = "";   // used only if no video is set — a real photo instead of the illustrated skyline
