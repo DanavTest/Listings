@@ -24,7 +24,12 @@ $('emailLink').textContent = OWNER_EMAIL;
 
 if (LOGO_URL) { const l = $('brandLogo'); l.src = LOGO_URL; l.classList.add('loaded'); }
 if (AGENT_PHOTO_URL) { $('agentPhoto').src = AGENT_PHOTO_URL; }
-if (HERO_IMAGE_URL) {
+if (typeof HERO_VIDEO_URL !== 'undefined' && HERO_VIDEO_URL) {
+  const v = $('heroVideo');
+  v.src = HERO_VIDEO_URL;
+  v.play().catch(() => {});
+  $('heroSection').classList.add('has-video');
+} else if (HERO_IMAGE_URL) {
   $('heroPhoto').style.backgroundImage = `url('${safeUrl(HERO_IMAGE_URL)}')`;
   $('heroSection').classList.add('has-photo');
 }
@@ -96,19 +101,19 @@ buildLayer($('slMid'),  { seed: 21, fill:'#4a2391', minW:40, maxW:92, minH:130, 
   landmarks:[ () => landmarkDome(560, '#4a2391') ] });
 buildLayer($('slNear'), { seed: 63, fill:'#170b52', minW:46, maxW:110, minH:80,  maxH:230, gap:2,  lit:0.24, winOpacity:0.9 });
 
-/* ---------- Parallax: mouse (desktop) / gentle drift (touch) + scroll ---------- */
+/* ---------- Parallax: constant ambient drift + mouse (desktop) + scroll dolly ---------- */
 (function(){
   const hero = $('heroSection');
-  if (reduceMotion || hero.classList.contains('has-photo')) return;
-  let tx = 0, ty = 0, cx = 0, cy = 0, visible = true, t0 = performance.now();
+  if (reduceMotion) return;
+  let mx = 0, my = 0, cx = 0, cy = 0, visible = true, t0 = performance.now();
   const touchOnly = window.matchMedia('(hover: none)').matches;
 
   hero.addEventListener('mousemove', e => {
     const r = hero.getBoundingClientRect();
-    tx = (e.clientX - r.left) / r.width - 0.5;
-    ty = (e.clientY - r.top) / r.height - 0.5;
+    mx = (e.clientX - r.left) / r.width - 0.5;
+    my = (e.clientY - r.top) / r.height - 0.5;
   });
-  hero.addEventListener('mouseleave', () => { tx = 0; ty = 0; });
+  hero.addEventListener('mouseleave', () => { mx = 0; my = 0; });
   window.addEventListener('scroll', () => {
     hero.style.setProperty('--sy', Math.min(window.scrollY, 900));
   }, { passive: true });
@@ -116,8 +121,14 @@ buildLayer($('slNear'), { seed: 63, fill:'#170b52', minW:46, maxW:110, minH:80, 
 
   (function loop(now){
     if (visible) {
-      if (touchOnly) { const t = (now - t0) / 4200; tx = Math.sin(t) * 0.35; ty = Math.cos(t * .7) * 0.15; }
-      cx += (tx - cx) * 0.07; cy += (ty - cy) * 0.07;
+      // Always-on slow drift so the scene feels alive even when the cursor is still —
+      // this is what reads as "moving through" the space rather than a static photo.
+      const t = (now - t0) / 6000;
+      const driftX = Math.sin(t) * (touchOnly ? 0.4 : 0.16);
+      const driftY = Math.cos(t * 0.6) * (touchOnly ? 0.18 : 0.08);
+      const tx = touchOnly ? driftX : driftX + mx * 0.85;
+      const ty = touchOnly ? driftY : driftY + my * 0.85;
+      cx += (tx - cx) * 0.06; cy += (ty - cy) * 0.06;
       hero.style.setProperty('--mx', cx.toFixed(4));
       hero.style.setProperty('--my', cy.toFixed(4));
     }
