@@ -4,12 +4,12 @@
 // =====================================================================
 
 // 1. From Supabase: Project Settings > API Keys
-const SUPABASE_URL = "https://YOUR-PROJECT.supabase.co";
-const SUPABASE_ANON_KEY = "YOUR-ANON-PUBLIC-KEY";
+const SUPABASE_URL = "https://ccipbsulocjavtjegpbj.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNjaXBic3Vsb2NqYXZ0amVncGJqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkzMDcxMzYsImV4cCI6MjEwNDg4MzEzNn0.OEMfA80cOQczTdeZHtVGVUODt3Js2eOfct759iNSz-8";
 
 // 2. Your contact details
 const WHATSAPP_NUMBER = "91XXXXXXXXXX"; // country code + number, no + or spaces
-const OWNER_EMAIL = "danav@example.com";
+const OWNER_EMAIL = "dreamzlanddl@gmail.com";
 const PHONE_DISPLAY = "+91 XXXXX XXXXX"; // shown on the page
 
 // 3. Images — paste public URLs from Supabase Storage (leave "" to skip)
