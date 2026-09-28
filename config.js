@@ -15,5 +15,5 @@ const PHONE_DISPLAY = "+91 XXXXX XXXXX"; // shown on the page
 // 3. Images — paste public URLs from Supabase Storage (leave "" to skip)
 const LOGO_URL = "https://ccipbsulocjavtjegpbj.supabase.co/storage/v1/object/public/listing-photos/WhatsApp%20Image%202026-09-14%20at%2012.20.33%20AM.jpeg";         // your company logo (square works best)
 const AGENT_PHOTO_URL = "";  // your photo for the profile section
-const HERO_VIDEO_URL = "";   // BEST OPTION: a short looping video (mp4) of a skyline/interior — this is what makes the hero feel like real footage
+const HERO_VIDEO_URL = "https://ccipbsulocjavtjegpbj.supabase.co/storage/v1/object/public/video/Drone.mp4";   // BEST OPTION: a short looping video (mp4) of a skyline/interior — this is what makes the hero feel like real footage
 const HERO_IMAGE_URL = "https://ccipbsulocjavtjegpbj.supabase.co/storage/v1/object/public/listing-photos/chennai.jpg";   // used only if no video is set — a real photo instead of the illustrated skyline
