@@ -181,6 +181,8 @@ function formatPrice(p){
   return { display, sub: p.price_label || 'All-inclusive' };
 }
 
+window.currentListings = []; // used by the chat widget to ground its answers in real data
+
 async function loadListings(){
   const grid = $('listingGrid');
   if (!sb) { grid.innerHTML = `<div class="state-msg">Couldn't load listings right now. Please try again shortly.</div>`; $('statCount').textContent = '—'; return; }
@@ -198,6 +200,7 @@ async function loadListings(){
     return;
   }
 
+  window.currentListings = data;
   countUp($('statCount'), data.length);
 
   grid.innerHTML = data.map((p, i) => {
@@ -292,3 +295,92 @@ $('sendEmail').addEventListener('click', async () => {
   window.location.href = `mailto:${OWNER_EMAIL}?subject=${encodeURIComponent('Enquiry: ' + v.property_name)}&body=${encodeURIComponent(lines.join('\n'))}`;
   status.textContent = 'Saved. Opening your email app with the enquiry filled in.';
 });
+
+/* =====================================================================
+   AI CHAT WIDGET
+   Talks to /api/chat (a Vercel serverless function) — never calls OpenAI
+   directly from the browser, so your API key stays private.
+   ===================================================================== */
+(function(){
+  const widget = $('chatWidget');
+  const toggle = $('chatToggle');
+  const closeBtn = $('chatClose');
+  const body = $('chatBody');
+  const input = $('chatInput');
+  const sendBtn = $('chatSend');
+  if (!widget || !toggle) return;
+
+  const sessionId = 'sess_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+  const history = []; // [{role:'user'|'assistant', content:'...'}]
+
+  function open(){ widget.classList.add('open'); $('chatPanel').setAttribute('aria-hidden', 'false'); input.focus(); }
+  function close(){ widget.classList.remove('open'); $('chatPanel').setAttribute('aria-hidden', 'true'); }
+  toggle.addEventListener('click', () => widget.classList.contains('open') ? close() : open());
+  closeBtn.addEventListener('click', close);
+
+  function addMessage(role, text){
+    const div = document.createElement('div');
+    div.className = `chat-msg ${role === 'user' ? 'user' : 'bot'}`;
+    div.textContent = text;
+    body.appendChild(div);
+    body.scrollTop = body.scrollHeight;
+    return div;
+  }
+  function addTyping(){
+    const div = document.createElement('div');
+    div.className = 'chat-msg bot typing';
+    div.innerHTML = '<span></span><span></span><span></span>';
+    body.appendChild(div);
+    body.scrollTop = body.scrollHeight;
+    return div;
+  }
+
+  async function logMessage(role, content){
+    if (!sb) return;
+    try { await sb.from('chat_messages').insert([{ session_id: sessionId, role, content }]); }
+    catch (e) { console.error('Could not log chat message:', e); }
+  }
+
+  async function sendMessage(){
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = '';
+    sendBtn.disabled = true;
+
+    addMessage('user', text);
+    history.push({ role: 'user', content: text });
+    logMessage('user', text);
+
+    const typingEl = addTyping();
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: text,
+          history: history.slice(0, -1),
+          listings: window.currentListings || [],
+          business: { brand: 'Dreamzland Chennai', agent: 'Danav', area: 'South Chennai' }
+        })
+      });
+      const data = await res.json();
+      typingEl.remove();
+
+      const reply = res.ok ? data.reply : "Sorry, I'm having trouble replying right now — please use the enquiry form or WhatsApp below instead.";
+      addMessage('bot', reply);
+      history.push({ role: 'assistant', content: reply });
+      logMessage('assistant', reply);
+    } catch (e) {
+      typingEl.remove();
+      addMessage('bot', "Sorry, I couldn't connect just now — please try again or use WhatsApp below.");
+      console.error('Chat request failed:', e);
+    } finally {
+      sendBtn.disabled = false;
+      input.focus();
+    }
+  }
+
+  sendBtn.addEventListener('click', sendMessage);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
+})();
