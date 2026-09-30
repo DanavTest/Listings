@@ -1,7 +1,7 @@
 // =====================================================================
 // /api/chat.js — Vercel Serverless Function
 // Runs on Vercel's server, NEVER in the visitor's browser — this is the
-// only safe place to hold secret keys (OPENAI_API_KEY, and the Supabase
+// only safe place to hold secret keys (GEMINI_API_KEY, and the Supabase
 // SERVICE ROLE key used only for rate-limit bookkeeping below).
 //
 // ACCESS CONTROL (enforced in code, not just by asking the AI nicely):
@@ -125,14 +125,16 @@ function validateRequest(body) {
   return { valid: true };
 }
 
+const GEMINI_MODEL = 'gemini-2.0-flash'; // check ai.google.dev for the current model list if this ever stops working
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-  if (!OPENAI_API_KEY) {
-    return res.status(500).json({ error: 'OPENAI_API_KEY is not set in Vercel yet.' });
+  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+  if (!GEMINI_API_KEY) {
+    return res.status(500).json({ error: 'GEMINI_API_KEY is not set in Vercel yet.' });
   }
 
   const ip = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim();
@@ -163,34 +165,39 @@ export default async function handler(req, res) {
       `- ${p.name} | ${p.location || '—'} | ${p.bhk || '—'} | ${p.sqft ? p.sqft + ' sq.ft' : '—'} | ${p.status || 'Available'} | price: ${p.price_amount ? '₹' + p.price_amount : 'on request'}`
     ).join('\n') || 'No listings are currently loaded.';
 
-    const messages = [
-      { role: 'system', content: `${SYSTEM_PROMPT}\n\nAPPROVED CURRENT LISTINGS (this is the only property data you may reference):\n${listingLines}` },
-      ...(Array.isArray(history) ? history.slice(-10) : []),
-      { role: 'user', content: message }
+    // Gemini uses "contents" with role: 'user' | 'model' (not 'assistant'), and
+    // the system prompt goes in its own separate systemInstruction field.
+    const contents = [
+      ...(Array.isArray(history) ? history.slice(-10) : []).map(m => ({
+        role: m.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: m.content }]
+      })),
+      { role: 'user', parts: [{ text: message }] }
     ];
 
-    const r = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${OPENAI_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages,
-        max_tokens: 300,
-        temperature: 0.3
-      })
-    });
+    const r = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [{ text: `${SYSTEM_PROMPT}\n\nAPPROVED CURRENT LISTINGS (this is the only property data you may reference):\n${listingLines}` }]
+          },
+          contents,
+          generationConfig: { maxOutputTokens: 300, temperature: 0.3 }
+        })
+      }
+    );
 
     if (!r.ok) {
       const errText = await r.text();
-      console.error('OpenAI error:', errText);
+      console.error('Gemini error:', errText);
       return res.status(502).json({ error: 'The AI service returned an error.' });
     }
 
     const data = await r.json();
-    const reply = data?.choices?.[0]?.message?.content?.trim()
+    const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim()
       || "I don't have verified information on that right now — please contact Danav directly for a confirmed answer.";
     return res.status(200).json({ reply });
 
