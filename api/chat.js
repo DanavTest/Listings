@@ -175,25 +175,36 @@ export default async function handler(req, res) {
       { role: 'user', parts: [{ text: message }] }
     ];
 
-    const r = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
-      {
+    const geminiBody = JSON.stringify({
+      systemInstruction: {
+        parts: [{ text: `${SYSTEM_PROMPT}\n\nAPPROVED CURRENT LISTINGS (this is the only property data you may reference):\n${listingLines}` }]
+      },
+      contents,
+      generationConfig: { maxOutputTokens: 300, temperature: 0.3 }
+    });
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+
+    // Gemini's free tier occasionally returns 503 "high demand" errors that clear
+    // up within a second or two — retry a couple of times before giving up.
+    let r, lastErrText;
+    const MAX_ATTEMPTS = 3;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      r = await fetch(geminiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          systemInstruction: {
-            parts: [{ text: `${SYSTEM_PROMPT}\n\nAPPROVED CURRENT LISTINGS (this is the only property data you may reference):\n${listingLines}` }]
-          },
-          contents,
-          generationConfig: { maxOutputTokens: 300, temperature: 0.3 }
-        })
-      }
-    );
+        body: geminiBody
+      });
+      if (r.ok) break;
+
+      lastErrText = await r.text();
+      const retryable = r.status === 503 || r.status === 429;
+      console.error(`Gemini error (attempt ${attempt}/${MAX_ATTEMPTS}):`, lastErrText);
+      if (!retryable || attempt === MAX_ATTEMPTS) break;
+      await new Promise(resolve => setTimeout(resolve, attempt * 700)); // 700ms, then 1400ms
+    }
 
     if (!r.ok) {
-      const errText = await r.text();
-      console.error('Gemini error:', errText);
-      return res.status(502).json({ error: 'The AI service returned an error.' });
+      return res.status(502).json({ error: "Our AI assistant is a little busy right now — please try again in a few seconds, or use WhatsApp below." });
     }
 
     const data = await r.json();
