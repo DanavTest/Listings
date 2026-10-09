@@ -364,15 +364,25 @@ $('sendEmail').addEventListener('click', async () => {
           business: { brand: 'Dreamzland Chennai', agent: 'Danav', area: 'South Chennai' }
         })
       });
-      const data = await res.json();
+      let data = {};
+      try { data = await res.json(); } catch (_) { /* non-JSON error page */ }
       typingEl.remove();
 
-      const reply = res.ok ? data.reply : "Sorry, I'm having trouble replying right now — please use the enquiry form or WhatsApp below instead.";
-      addMessage('bot', reply);
-      history.push({ role: 'assistant', content: reply });
-      logMessage('assistant', reply);
+      if (res.ok && data.reply) {
+        addMessage('bot', data.reply);
+        history.push({ role: 'assistant', content: data.reply });
+        logMessage('assistant', data.reply);
+      } else {
+        // A failed request must NOT stay in the conversation history, or every
+        // later message would be sent with a dangling question and fail too.
+        history.pop();
+        const friendly = data.error || "Sorry, I'm having trouble replying right now — please use the enquiry form or WhatsApp below instead.";
+        addMessage('bot', friendly);
+        console.error('Chat request failed:', res.status, data.code || '', data.error || '');
+      }
     } catch (e) {
       typingEl.remove();
+      history.pop();
       addMessage('bot', "Sorry, I couldn't connect just now — please try again or use WhatsApp below.");
       console.error('Chat request failed:', e);
     } finally {
