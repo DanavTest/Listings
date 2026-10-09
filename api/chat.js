@@ -19,6 +19,7 @@ const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
 const RATE_LIMIT_MAX = 12;           // max messages per IP per window
 const MAX_MESSAGE_LENGTH = 600;      // characters
 const MAX_HISTORY_MESSAGES = 40;     // ~20 back-and-forth turns
+const GEMINI_MODEL = 'gemini-3.8-flash'; // check ai.google.dev/gemini-api/docs/models if this ever stops working
 
 const SYSTEM_PROMPT = `You are the Dreamzland property assistant.
 
@@ -52,6 +53,12 @@ questions, provide only verified information and
 recommend contacting the appropriate professional or
 Dreamzland representative when necessary.`;
 
+const FRIENDLY_ERRORS = {
+  quota: "Our AI assistant has reached its usage limit for the moment — please try again in a minute, or use the enquiry form or WhatsApp below.",
+  busy: "Our AI assistant is a little busy right now — please try again in a few seconds, or use WhatsApp below.",
+  default: "Sorry, I'm having trouble replying right now — please use the enquiry form or WhatsApp below instead."
+};
+
 /* ---------- Rate limiting (persisted in Supabase so it survives across
    serverless cold starts — an in-memory counter would reset constantly) ---------- */
 async function checkRateLimit(ip) {
@@ -74,7 +81,6 @@ async function checkRateLimit(ip) {
     const row = Array.isArray(rows) ? rows[0] : null;
 
     if (!row || now - new Date(row.window_start).getTime() > RATE_LIMIT_WINDOW_MS) {
-      // start a fresh window
       await fetch(`${endpoint}?on_conflict=ip`, {
         method: 'POST',
         headers: { ...headers, Prefer: 'resolution=merge-duplicates' },
@@ -115,7 +121,6 @@ function validateRequest(body) {
   if (Array.isArray(history) && history.some(m => !m || typeof m.content !== 'string' || !['user', 'assistant'].includes(m.role))) {
     return { valid: false, error: 'Invalid request format.' };
   }
-  // Spam heuristics: long runs of the same character, or link-flooding
   if (/(.)\1{9,}/.test(message)) {
     return { valid: false, error: 'Please send a genuine question.' };
   }
@@ -125,7 +130,42 @@ function validateRequest(body) {
   return { valid: true };
 }
 
-const GEMINI_MODEL = 'gemini-3.8-flash'; // check ai.google.dev for the current model list if this ever stops working
+/* ---------- Helpers: tidy listing data and conversation for the model ---------- */
+const clean = (v, max = 80) => String(v ?? '').replace(/[\r\n]+/g, ' ').trim().slice(0, max);
+
+// 2500000 -> "₹25,00,000 (25 lakh)" so the model never has to guess at digits
+function formatINR(amount) {
+  const n = Number(amount);
+  if (!Number.isFinite(n) || n <= 0) return 'on request';
+  const trim = x => x.toFixed(2).replace(/\.?0+$/, '');
+  const words = n >= 1e7 ? `${trim(n / 1e7)} crore` : n >= 1e5 ? `${trim(n / 1e5)} lakh` : '';
+  return `₹${n.toLocaleString('en-IN')}${words ? ` (${words})` : ''}`;
+}
+
+function buildListingLines(listings) {
+  const lines = (Array.isArray(listings) ? listings : []).slice(0, 25).map(p =>
+    `- ${clean(p.name)} | location: ${clean(p.location) || '—'} | ${clean(p.bhk) || '—'} | ${p.sqft ? clean(p.sqft, 10) + ' sq.ft' : '—'} | floor: ${clean(p.floor) || '—'} | status: ${clean(p.status) || 'Available'} | price: ${formatINR(p.price_amount)}${p.price_label ? ' ' + clean(p.price_label, 30) : ''}`
+  );
+  return lines.join('\n') || 'No listings are currently loaded.';
+}
+
+// Earlier turns are sent as plain text inside ONE user message. Replaying them as
+// separate "model" turns can be rejected by Gemini 3.x thinking models (they expect
+// internal thought signatures on model turns), and it also avoids any role-order problems.
+function buildTranscript(history) {
+  return (Array.isArray(history) ? history.slice(-10) : [])
+    .map(m => `${m.role === 'assistant' ? 'Assistant' : 'Visitor'}: ${clean(m.content, 800)}`)
+    .join('\n');
+}
+
+function classifyError(status) {
+  if (status === 429) return 'quota';
+  if (status === 503) return 'busy';
+  if (status === 400) return 'bad_request';
+  if (status === 401 || status === 403) return 'auth';
+  if (status === 404) return 'model';
+  return 'upstream';
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -134,18 +174,18 @@ export default async function handler(req, res) {
 
   const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
   if (!GEMINI_API_KEY) {
-    return res.status(500).json({ error: 'GEMINI_API_KEY is not set in Vercel yet.' });
+    return res.status(500).json({ error: FRIENDLY_ERRORS.default, code: 'no_key' });
   }
 
   const ip = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim();
   const rl = await checkRateLimit(ip);
   if (!rl.ok) {
-    return res.status(429).json({ error: "You're sending messages a little too fast — please wait a moment and try again." });
+    return res.status(429).json({ error: "You're sending messages a little too fast — please wait a moment and try again.", code: 'rate_limited' });
   }
 
   const check = validateRequest(req.body);
   if (!check.valid) {
-    return res.status(400).json({ error: check.error });
+    return res.status(400).json({ error: check.error, code: 'invalid' });
   }
 
   try {
@@ -155,65 +195,63 @@ export default async function handler(req, res) {
     // of letting the thread (and the API cost) grow unbounded.
     if (Array.isArray(history) && history.length >= MAX_HISTORY_MESSAGES) {
       return res.status(200).json({
-        reply: `We've covered a lot here! For anything further, please reach out to ${business?.agent || 'Danav'} directly via WhatsApp or the enquiry form — that'll get you a faster, more detailed answer.`
+        reply: `We've covered a lot here! For anything further, please reach out to ${clean(business?.agent) || 'Danav'} directly via WhatsApp or the enquiry form — that'll get you a faster, more detailed answer.`
       });
     }
 
-    // Ground the assistant in only the approved, currently-published listings
-    // the client already loaded from Supabase — it is never given database access itself.
-    const listingLines = (Array.isArray(listings) ? listings : []).slice(0, 25).map(p =>
-      `- ${p.name} | ${p.location || '—'} | ${p.bhk || '—'} | ${p.sqft ? p.sqft + ' sq.ft' : '—'} | ${p.status || 'Available'} | price: ${p.price_amount ? '₹' + p.price_amount : 'on request'}`
-    ).join('\n') || 'No listings are currently loaded.';
+    const systemText = `${SYSTEM_PROMPT}\n\nAPPROVED CURRENT LISTINGS (this is the only property data you may reference; prices are in Indian rupees — quote them exactly as written here):\n${buildListingLines(listings)}`;
+    const transcript = buildTranscript(history);
+    const userText = transcript
+      ? `Conversation so far:\n${transcript}\n\nVisitor's new message:\n${message}`
+      : message;
 
-    // Gemini uses "contents" with role: 'user' | 'model' (not 'assistant'), and
-    // the system prompt goes in its own separate systemInstruction field.
-    const contents = [
-      ...(Array.isArray(history) ? history.slice(-10) : []).map(m => ({
-        role: m.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: m.content }]
-      })),
-      { role: 'user', parts: [{ text: message }] }
-    ];
-
-    const geminiBody = JSON.stringify({
-      systemInstruction: {
-        parts: [{ text: `${SYSTEM_PROMPT}\n\nAPPROVED CURRENT LISTINGS (this is the only property data you may reference):\n${listingLines}` }]
-      },
-      contents,
-      generationConfig: { maxOutputTokens: 300, temperature: 0.3 }
-    });
     const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+    const buildBody = (withThinkingConfig) => JSON.stringify({
+      systemInstruction: { parts: [{ text: systemText }] },
+      contents: [{ role: 'user', parts: [{ text: userText }] }],
+      generationConfig: {
+        // maxOutputTokens also counts the model's hidden "thinking" tokens on Gemini 3.x,
+        // so a small cap used to cut answers off mid-sentence. Keep thinking low + cap generous.
+        maxOutputTokens: 1024,
+        temperature: 0.3,
+        ...(withThinkingConfig ? { thinkingConfig: { thinkingLevel: 'low' } } : {})
+      }
+    });
 
-    // Gemini's free tier occasionally returns 503 "high demand" errors that clear
-    // up within a second or two — retry a couple of times before giving up.
-    let r, lastErrText;
+    // Retry briefly on 503 ("high demand"). Do NOT retry 429 — a quota limit won't clear in a second.
+    // If Google rejects the thinking setting itself (400), retry once without it.
+    let r, lastStatus, lastErrText, withThinking = true;
     const MAX_ATTEMPTS = 3;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      r = await fetch(geminiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: geminiBody
-      });
+      r = await fetch(geminiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: buildBody(withThinking) });
       if (r.ok) break;
 
+      lastStatus = r.status;
       lastErrText = await r.text();
-      const retryable = r.status === 503 || r.status === 429;
-      console.error(`Gemini error (attempt ${attempt}/${MAX_ATTEMPTS}):`, lastErrText);
-      if (!retryable || attempt === MAX_ATTEMPTS) break;
-      await new Promise(resolve => setTimeout(resolve, attempt * 700)); // 700ms, then 1400ms
+      console.error(`Gemini failed (attempt ${attempt}/${MAX_ATTEMPTS}): status=${lastStatus} code=${classifyError(lastStatus)} body=${lastErrText.slice(0, 600)}`);
+
+      if (lastStatus === 400 && withThinking) { withThinking = false; continue; }
+      if (lastStatus !== 503 || attempt === MAX_ATTEMPTS) break;
+      await new Promise(resolve => setTimeout(resolve, attempt * 700));
     }
 
     if (!r.ok) {
-      return res.status(502).json({ error: "Our AI assistant is a little busy right now — please try again in a few seconds, or use WhatsApp below." });
+      const code = classifyError(lastStatus);
+      return res.status(502).json({ error: FRIENDLY_ERRORS[code] || FRIENDLY_ERRORS.default, code });
     }
 
     const data = await r.json();
-    const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim()
-      || "I don't have verified information on that right now — please contact Danav directly for a confirmed answer.";
+    const cand = data?.candidates?.[0];
+    const text = (cand?.content?.parts || []).filter(p => typeof p.text === 'string' && !p.thought).map(p => p.text).join('').trim();
+    if (cand?.finishReason && cand.finishReason !== 'STOP') {
+      console.error(`Gemini finishReason=${cand.finishReason} (answer length ${text.length})`);
+    }
+
+    const reply = text || "I don't have verified information on that right now — please contact Danav directly for a confirmed answer.";
     return res.status(200).json({ reply });
 
   } catch (err) {
     console.error('Chat function error:', err);
-    return res.status(500).json({ error: 'Something went wrong on the server.' });
+    return res.status(500).json({ error: FRIENDLY_ERRORS.default, code: 'server' });
   }
 }
