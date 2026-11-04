@@ -143,7 +143,7 @@
       return '<div class="rec-item ' + i.type + '"><div class="rec-title">' + esc(i.title) + '</div><div class="rec-text">' + esc(i.text) + '</div></div>';
     }).join('');
     return '<div class="card"><h2><i class="fas fa-lightbulb" style="color:var(--primary)"></i> What this means</h2>' +
-      '<p class="auto-note" style="margin-bottom:14px">These notes come from fixed rules applied to your numbers. They are not AI. The AI review comes in a later step.</p>' + items + '</div>';
+      '<p class="auto-note" style="margin-bottom:14px">These notes come from fixed rules applied to your numbers. They are not AI. The AI review is below.</p>' + items + '</div>';
   }
 
   /* ---------- 5. Red flags ---------- */
