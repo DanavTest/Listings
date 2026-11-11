@@ -220,7 +220,10 @@ async function loadListings(){
           </div>
           <div class="deed-price">
             <div class="amt">₹ ${esc(price.display)}<span>${esc(price.sub)}</span></div>
-            <button type="button" class="deed-cta enquire-link" data-property="${esc(p.name)}">Enquire →</button>
+            <span class="deed-actions">
+              <a class="deed-compare" href="compare.html?add=${encodeURIComponent(p.id)}" title="Compare this property with others">Compare</a>
+              <button type="button" class="deed-cta enquire-link" data-property="${esc(p.name)}">Enquire →</button>
+            </span>
           </div>
         </div>
         <div class="deed-glare"></div>
