@@ -332,17 +332,36 @@
         .then(function (res) {
           if (res.error || !Array.isArray(res.data) || !res.data.length) return;
           listings = res.data;
+          applyAddFromUrl();
           renderGrid();
         }, function (err) { console.warn('Could not load listings:', err); });
     } catch (e) { console.warn('Listings unavailable:', e); }
   }
 
-  function importListing(i, id) {
-    if (!id) return;
-    var l = listings.filter(function (x) { return String(x.id) === String(id); })[0];
-    var p = state.properties[i];
-    if (!l || !p) return;
+  // Arriving from a "Compare" button on a listing card: compare.html?add=<listing id>
+  function applyAddFromUrl() {
+    var ids;
+    try { ids = new URLSearchParams(window.location.search).getAll('add'); } catch (e) { return; }
+    if (!ids.length) return;
+    ids.slice(0, MAX_PROPS).forEach(function (id) {
+      var l = listings.filter(function (x) { return String(x.id) === String(id); })[0];
+      if (!l) return;
+      if (state.properties.some(function (p) { return p.listingId === String(l.id); })) return; // already added
+      var slot = -1;
+      state.properties.forEach(function (p, i) { if (slot === -1 && !hasData(p)) slot = i; });
+      if (slot === -1) {
+        if (state.properties.length >= MAX_PROPS) return;
+        state.properties.push(E.emptyProperty(LETTERS[state.properties.length]));
+        slot = state.properties.length - 1;
+      }
+      fillFromListing(state.properties[slot], l);
+    });
+    try { window.history.replaceState(null, '', window.location.pathname); } catch (e) { /* ignore */ }
+    save();
+    toast('Added from the listings. Add the carpet area and any extra charges for a fuller comparison.');
+  }
 
+  function fillFromListing(p, l) {
     p.name = l.name || p.name;
     if (l.location) p.location = l.location;
     if (!p.city) p.city = 'Chennai';
@@ -355,7 +374,14 @@
     if (/ready|occup|possession/i.test(l.status || '')) p.constructionStatus = 'ready';
     else if (/under|construction|launch/i.test(l.status || '')) p.constructionStatus = 'under_construction';
     p.listingId = String(l.id);
+  }
 
+  function importListing(i, id) {
+    if (!id) return;
+    var l = listings.filter(function (x) { return String(x.id) === String(id); })[0];
+    var p = state.properties[i];
+    if (!l || !p) return;
+    fillFromListing(p, l);
     renderGrid(); save();
     toast('Filled in from "' + (l.name || 'the listing') + '". Add the carpet area and any extra charges for a fuller comparison.');
   }
