@@ -277,3 +277,8 @@ footer{padding:38px 0;text-align:center;background:var(--indigo-night);color:rgb
   *,*::before,*::after{animation:none!important;transition:none!important;}
   .reveal{opacity:1;transform:none;}
 }
+
+/* ---- Compare link on listing cards ---- */
+.deed-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:flex-end}
+.deed-compare{font-size:.78rem;font-weight:700;letter-spacing:.04em;color:var(--indigo);text-decoration:none;border-bottom:2px solid var(--yellow);padding-bottom:1px}
+.deed-compare:hover{color:var(--yellow)}
